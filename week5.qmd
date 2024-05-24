@@ -1,0 +1,166 @@
+---
+title: "Exercise Week 5"
+format: html
+editor: visual
+---
+# Functions
+```{r}
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(ggplot2)
+library(plotly)
+```
+
+
+# Introduction
+
+We look at functions and how they work. 
+
+```{r}
+testfun <- function() {}
+class(testfun)
+
+testfun <- function() {
+    print("this function does nothing")
+}
+
+testfun()
+
+testfun <- function(sometext) {
+    print(sometext)
+}
+
+testfun(sometext = "this function does slightly more, but still not much")
+
+my_age <- function(birthday, output_unit) {
+    difftime(Sys.time(), birthday, units = output_unit)
+}
+
+my_age(birthday = "1997-04-23", output_unit = "days")
+my_age("1998-07-20", "days")
+
+my_age <- function(birthday, output_unit = "days") {
+    difftime(Sys.time(), birthday, units = output_unit)
+}
+
+# if not stated otherwise, our function uses the unit "days"
+my_age("1997-04-23")
+
+# We can still overwrite units
+my_age("1997-04-23", "hours")
+```
+
+# Task 1: Write own function
+Create the following two functions:
+1. Calculate BMI based on a person’s height and weight
+2. Calculate Degrees Fahrenheit based on Degrees Celcius
+
+```{r}
+bmi <- function(weight, height) {
+  weight / (height)^2
+}
+
+bmi(60, 1.70)
+
+ami_temperature <- function(celsius) {
+  celsius * 9/5 + 32
+}
+  
+ami_temperature(20)
+
+euc_dist <- function(x1, y1, x2, y2) {
+  ((x2-x1)^2+(y2-y1)^2)^1/2
+}
+
+euc_dist(2570409,1204752, 2570390,1204825)
+```
+
+# Task 2: Prepare Analysis
+In the next tasks we will look for “meet” patterns in our wild boar data. To simplify this, we will only use a subset of our wild boar data: The individuals Rosa and Sabi for the timespan 01.04.2015 - 15.04.2015.
+
+```{r}
+data <- read_delim("wildschwein_BE_2056.csv", ",")
+rosa_sabi <- data |> 
+  filter(between(DatetimeUTC,as.Date("2015-04-01") ,as.Date("2015-04-15"))) |> 
+  filter(str_detect(TierName,"Sabi|Rosa"))
+
+```
+
+# Task 3: Create Join Key
+Have a look at your dataset. You will notice that samples are taken at every full hour, quarter past, half past and quarter to. The sampling time is usually off by a couple of seconds.
+
+To compare Rosa and Sabi’s locations, we first need to match the two animals temporally. For that we can use a join, but need identical time stamps to serve as a join key. We therefore need to slightly adjust our time stamps to a common, concurrent interval.
+
+The task is therefor to round the minutes of DatetimeUTC to a multiple of 15 (00, 15, 30,45) and store the values in a new column
+
+```{r}
+rosa_sabi$DateTimeRounded <- round_date(
+  rosa_sabi$DatetimeUTC,
+  unit = "15 mins")
+```
+
+# Task 4: Measuring distance at concurrent locations
+To measure the distance between concurrent locations, we need to follow the following steps.
+
+1. Split the wildschwein_filter object into one data.frame per animal
+2. Join* these datasets by the new Datetime column created in the last task. The joined observations are temporally close.
+3. In the joined dataset, calculate Euclidean distances between concurrent observations and store the values in a new column
+4. Use a reasonable threshold on distance to determine if the animals are also spatially close enough to constitute a meet (we use 100 meters). Store this Boolean information (TRUE/FALSE) in a new column
+
+
+```{r}
+# split dataframe
+as.factor(rosa_sabi$TierName)
+splitted <- split(rosa_sabi, rosa_sabi$TierName, drop = TRUE)
+
+# join dataframes by DateTimeRounded
+joined <- full_join(splitted$Rosa, splitted$Sabi, by = join_by(DateTimeRounded), suffix = c(".Rosa", ".Sabi"))
+
+# calculate euclidean distance between concurrent observations
+joined <- joined |> 
+  mutate(
+    euc_distance = euc_dist(E.Rosa, N.Rosa, E.Sabi, N.Sabi)
+  )
+# check if they are within 100 m of eachother
+joined <- joined |> 
+  mutate(
+    close = euc_distance < 10000)
+```
+
+# Task 5: Visualize data
+Now, visualize the meets spatially in a way that you think reasonable.
+
+```{r}
+# filter joined dataset to only meets
+joined_filter <- joined |>
+    filter(close)
+
+ggplot() +
+  geom_point(data = splitted$Rosa, aes(E,N), colour = "pink") +
+  geom_point(data = splitted$Sabi, aes(E,N), colour = "lightblue") +
+  geom_point(data = joined_filter, aes(E.Rosa,N.Rosa), colour = "purple") +
+  geom_point(data = joined_filter, aes(E.Sabi,N.Sabi), colour = "blue")
+```
+
+# Task 6 (optional): Visualize data as timecube with plotly
+
+```{r}
+plot_ly(joined, x = ~E.Rosa, y = ~N.Rosa, z = ~DatetimeUTC.Rosa, 
+        type = 'scatter3d', mode = 'lines', opacity = 1, 
+        line = list(width = 6, color = "pink", reverscale = FALSE)) |> 
+  add_trace(joined, x = ~E.Sabi, y = ~N.Sabi, z = ~DatetimeUTC.Sabi, 
+        type = 'scatter3d', mode = 'lines', opacity = 1, 
+        line = list(width = 6, color = "lightblue", reverscale = FALSE)) |>
+  
+  add_markers(joined_filter, x = ~joined_filter$E.Rosa, y = ~joined_filter$N.Rosa, 
+              z = ~joined_filter$DatetimeUTC.Rosa, 
+        type = 'scatter3d', mode = 'markers', opacity = 1, 
+        marker = list(size = 6, color = "purple"))  |>
+  add_markers(joined_filter, x = ~joined_filter$E.Sabi, y = ~joined_filter$N.Sabi, 
+              z = ~joined_filter$DatetimeUTC.Sabi, 
+        type = 'scatter3d', mode = 'markers', opacity = 1, 
+        marker = list(size = 6, color = "blue", reverscale = FALSE))
+
+```
+
